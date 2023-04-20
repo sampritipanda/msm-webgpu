@@ -1,0 +1,196 @@
+<html>
+
+<body>
+    <script>
+        // Set up the WebGPU context and initialize the required resources
+        async function initWebGPU() {
+            const gpu = navigator.gpu;
+            const adapter = await gpu.requestAdapter();
+            const device = await adapter.requestDevice({
+                requiredLimits: {
+                    maxBufferSize: adapter.limits.maxBufferSize,
+                    maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+                    maxComputeWorkgroupSizeX: adapter.limits.maxComputeWorkgroupSizeX,
+                    maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup
+                },
+            });
+            return device;
+        }
+
+        // Shader code to handle 256-bit integer multiplication
+        const shaderCode = `
+
+struct BigInt256 {
+    limbs: array<u16,16>
+}
+
+fn add(a: BigInt256, b: BigInt256) -> BigInt256 {
+    
+}
+
+struct Array {
+	data: array<u32>
+};
+
+@group(0) @binding(0)
+var<storage, read_write> input_0: Array;
+@group(0) @binding(1)
+var<storage, read_write> input_1: Array;
+@group(0) @binding(2)
+var<storage, read_write> result: atomic<u32>;
+
+var<workgroup> mem: array<u32, 1024>;
+
+@compute @workgroup_size(1024)
+fn main(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+
+    let gidx = global_id.x;
+    let lidx = local_id.x;
+    
+    mem[lidx] = 0u;
+    for (var i: u32 = 0; i < 1024u; i = i + 1u) {
+        mem[lidx] = mem[lidx] + input_0.data[gidx] * input_1.data[gidx];
+    }
+
+    workgroupBarrier();
+
+    for (var offset: u32 = 1024u / 2u; offset > 0u; offset = offset / 2u) {
+        if (lidx < offset) {
+            mem[lidx] = mem[lidx] + mem[lidx + offset];
+        }
+
+        workgroupBarrier();
+    }
+
+    if (lidx == 0u) {
+        atomicAdd(&result, mem[0]);
+    }
+}
+`;
+
+        // Set up the input and output buffers for the matrices
+        async function setupBuffers(device, matrixSize, matrixA, matrixB) {
+            const bufferSize = matrixSize;
+
+            const input_0 = device.createBuffer({
+                size: bufferSize * 4,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            });
+            const input_1 = device.createBuffer({
+                size: bufferSize * 4,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            });
+            const result = device.createBuffer({
+                size: 4,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+            });
+
+            device.queue.writeBuffer(input_0, 0, new Uint8Array(matrixA.buffer));
+            device.queue.writeBuffer(input_1, 0, new Uint8Array(matrixB.buffer));
+
+            return [input_0, input_1, result];
+        }
+
+        // Create a pipeline and bind groups for the shader
+        async function setupPipeline(device, shaderCode, matrixSize, input_0, input_1, result) {
+            const shaderModule = device.createShaderModule({ code: shaderCode });
+
+            const bindGroupLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                ],
+            });
+
+            const pipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [
+                    bindGroupLayout
+                ],
+            });
+
+            const computePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: { module: shaderModule, entryPoint: "main" },
+            });
+
+            const bindGroup = device.createBindGroup({
+                layout: bindGroupLayout,
+                entries: [
+                    { binding: 0, resource: { buffer: input_0 } },
+                    { binding: 1, resource: { buffer: input_1 } },
+                    { binding: 2, resource: { buffer: result } },
+                ],
+            });
+
+            return [computePipeline, bindGroup];
+        }
+
+        // Run the compute pass and read back the results
+        async function runComputePass(device, pipeline, bindGroup, matrixSize, result, gpuReadBuffer) {
+            const commandEncoder = device.createCommandEncoder();
+
+            const computePass = commandEncoder.beginComputePass();
+            computePass.setPipeline(pipeline);
+            computePass.setBindGroup(0, bindGroup);
+            computePass.dispatchWorkgroups(Math.ceil(matrixSize / 1024));
+            computePass.end();
+
+            commandEncoder.copyBufferToBuffer(result, 0, gpuReadBuffer, 0, 4);
+            device.queue.submit([commandEncoder.finish()]);
+
+            await gpuReadBuffer.mapAsync(GPUBufferUsage.MAP_READ, 0, 4);
+            await device.queue.onSubmittedWorkDone();
+
+            const copyArrayBuffer = gpuReadBuffer.getMappedRange(0, 4);
+            const data = copyArrayBuffer.slice();
+
+            const resultMatrix = new Uint32Array(copyArrayBuffer);
+            return resultMatrix[0];
+        }
+
+        (async () => {
+            alert();
+            // Initialize WebGPU and set up matrices
+            const device = await initWebGPU();
+            const matrixSize = 1 << 25; // 4x4 matrix example
+            const matrixA = new Uint32Array(matrixSize); // 4x4 matrix with 256-bit integers
+            matrixA.fill(8);
+            const matrixB = new Uint32Array(matrixSize); // 4x4 matrix with 256-bit integers
+            matrixB.fill(4);
+
+            // Set up the buffers
+            const [input_0, input_1, result] = await setupBuffers(device, matrixSize, matrixA, matrixB);
+
+            // Set up the pipeline and bind groups
+            const [computePipeline, bindGroup] = await setupPipeline(device, shaderCode, matrixSize, input_0, input_1, result);
+
+            // Set up the read buffer
+            const gpuReadBuffer = device.createBuffer({
+                size: 4,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+            });
+
+            const start = performance.now();
+            // Run the compute pass and read back the results
+            const matrixC = await runComputePass(device, computePipeline, bindGroup, matrixSize, result, gpuReadBuffer);
+            console.log(performance.now() - start);
+            console.log(matrixC);
+
+            const start2 = performance.now();
+            let sum = 0;
+            for (let i = 0; i < matrixSize; i++) { 
+                for (let j = 0; j < 1024; j++) {
+                    sum += matrixA[i] * matrixB[i];
+                }
+            }
+            console.log(performance.now() - start2);
+            console.log(sum);
+        })();
+    </script>
+</body>
+
+</html>
