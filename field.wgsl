@@ -110,11 +110,12 @@ fn field_mul(a: BaseField, b: BaseField) -> BaseField {
     return field_reduce(r);
 }
 
-fn field_small_scalar_mul(a: u32, b: BaseField) -> BaseField {
-    var constant: BaseField;
-    constant.limbs[0] = a;
-    return field_mul(constant, b);
-}
+// This is slow, probably don't want to use this
+// fn field_small_scalar_mul(a: u32, b: BaseField) -> BaseField {
+//     var constant: BaseField;
+//     constant.limbs[0] = a;
+//     return field_mul(constant, b);
+// }
 
 fn field_small_scalar_shift(l: u32, a: BaseField) -> BaseField { // max shift allowed is 16
     // assert (l < 16u);
