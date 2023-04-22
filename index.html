@@ -11,150 +11,58 @@
                     maxBufferSize: adapter.limits.maxBufferSize,
                     maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
                     maxComputeWorkgroupSizeX: adapter.limits.maxComputeWorkgroupSizeX,
-                    maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup
+                    maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup,
+                    maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize
                 },
             });
             return device;
         }
 
-        // Shader code to handle 256-bit integer multiplication
-        const shaderCode = `
+        async function loadShader() {
+            const shaders_in_order = [
+                'bigint.wgsl',
+                'field.wgsl',
+                'curve.wgsl',
+                'main.wgsl',
+            ];
 
-const W = 16u;
-const W_mask = (1 << W) - 1u;
-const L = 256;
-const N = L / W;
-
-// No overflow
-struct BigInt256 {
-    limbs: array<u32,N>
-}
-
-struct BigInt512 {
-    limbs: array<u32,2*N>
-}
-
-fn add(a: BigInt256, b: BigInt256) -> BigInt256 {
-    var res: BigInt256;
-    var carry: u32 = 0;
-    for (var i: u32 = 0; i < N; i = i + 1u) {
-        let c = a.limbs[i] + b.limbs[i] + carry;
-        res.limbs[i] = c & W_mask;
-        carry = c >> W;
-    }
-    return res;
-}
-
-// assumes a >= b
-fn sub(a: BigInt256, b: BigInt256) -> BigInt256 {
-    var res: BigInt256;
-    var borrow: u32 = 0;
-    for (var i: u32 = 0; i < W; i = i + 1u) {
-        res.limbs[i] = a.limbs[i] - b.limbs[i] - borrow;
-        if (a.limbs[i] < (b.limbs[i] + borrow)) {
-            res.limbs[i] += W_mask;
-            borrow = 1u;
-        } else {
-            borrow = 0u;
+            // Shader code to handle 256-bit integer multiplication
+            let shaderCode = "";
+            for (let file of shaders_in_order) {
+                const resp = await fetch(file);
+                shaderCode += await resp.text();
+            }
+            return shaderCode;
         }
-    }
-    return res;
-}
 
-fn mul_n(acc: ptr<function, BigInt512>, a: BigInt256, a_start_idx: u32,  bi: u32) {
-    for (var i = 0u; i < N; i = i + 2u) {
-        let c = a.limbs[a_start_idx+i] * bi;
-        (*acc).limbs[i] = c & W_mask;
-        (*acc).limbs[i+1] = c >> 16;
-    }
-}
-
-fn mul(a: BigInt256, b: BigInt256) -> BigInt512 {
-    var even: BigInt512;
-    var odd: BigInt512;
-
-    mul_n(&even, a, 0u, b.limbs[0]);
-    mul_n(&odd, a, 1u, b.limbs[0]);
-
-    return even;
-}
-
-fn mul2(a: BigInt256, b: BigInt256) -> BigInt512 {
-    var res: BigInt512;
-    let N = 16u;
-    for (var i = 0u; i < N; i = i + 1u) {
-        for (var j = 0u; j < N; j = j + 1u) {
-            let c = a.limbs[i] * b.limbs[j];
-            res.limbs[i+j] += c & ((1 << 16) - 1u);
-            res.limbs[i+j+1] += c >> 16;
-        }   
-    }
-    // start from 0 and carry the extra over to the next index
-    for (var i = 0u; i < 2*N - 1; i = i + 1u) {
-        res.limbs[i+1] += res.limbs[i] >> 16;
-        res.limbs[i] = res.limbs[i] & ((1 << 16) - 1u);
-    }
-    return res;
-}
-
-
-struct Array {
-	data: array<u32>
-};
-
-@group(0) @binding(0)
-var<storage, read_write> input_0: Array;
-@group(0) @binding(1)
-var<storage, read_write> input_1: Array;
-@group(0) @binding(2)
-var<storage, read_write> result: Array;
-
-@compute @workgroup_size(1)
-fn main(
-    @builtin(global_invocation_id) global_id: vec3<u32>,
-    @builtin(local_invocation_id) local_id: vec3<u32>
-) {
-    let gidx = global_id.x;
-    let lidx = local_id.x;
-
-    var a: BigInt256;
-    var b: BigInt256;
-    for (var i = 0u; i < 16u; i = i + 1) {
-        a.limbs[i] = input_0.data[i];
-        b.limbs[i] = input_1.data[i];        
-    }
-    var res = mul2(a, b);
-    for (var i = 0u; i < 16u; i = i + 1) {
-        result.data[i] = res.limbs[i];
-    }
-}
-`;
+        const LIMB_WIDTH = 16;
+        const BIGINT_SIZE = 256;
+        const NUM_LIMBS = BIGINT_SIZE / LIMB_WIDTH;
+        const MSM_SIZE = 128;
 
         // Set up the input and output buffers for the matrices
-        async function setupBuffers(device, matrixSize, matrixA, matrixB) {
-            const bufferSize = matrixSize;
-
-            const input_0 = device.createBuffer({
-                size: bufferSize * 4,
+        async function setupBuffers(device, msm_size, in_points, in_scalars) {
+            const points = device.createBuffer({
+                size: msm_size * 3 * NUM_LIMBS * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
             });
-            const input_1 = device.createBuffer({
-                size: bufferSize * 4,
+            const scalars = device.createBuffer({
+                size: msm_size * NUM_LIMBS * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
             });
             const result = device.createBuffer({
-                size: bufferSize * 4,
+                size: 1 * 3 * NUM_LIMBS * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
             });
 
-            device.queue.writeBuffer(input_0, 0, new Uint8Array(matrixA.buffer));
-            device.queue.writeBuffer(input_1, 0, new Uint8Array(matrixB.buffer));
+            device.queue.writeBuffer(points, 0, new Uint8Array(in_points.buffer));
+            device.queue.writeBuffer(scalars, 0, new Uint8Array(in_scalars.buffer));
 
-            return [input_0, input_1, result];
+            return [points, scalars, result];
         }
 
         // Create a pipeline and bind groups for the shader
-        async function setupPipeline(device, shaderCode, matrixSize, input_0, input_1, result) {
+        async function setupPipeline(device, shaderCode, msm_size, points, scalars, result) {
             const shaderModule = device.createShaderModule({ code: shaderCode });
 
             const bindGroupLayout = device.createBindGroupLayout({
@@ -179,8 +87,8 @@ fn main(
             const bindGroup = device.createBindGroup({
                 layout: bindGroupLayout,
                 entries: [
-                    { binding: 0, resource: { buffer: input_0 } },
-                    { binding: 1, resource: { buffer: input_1 } },
+                    { binding: 0, resource: { buffer: points } },
+                    { binding: 1, resource: { buffer: scalars } },
                     { binding: 2, resource: { buffer: result } },
                 ],
             });
@@ -189,57 +97,113 @@ fn main(
         }
 
         // Run the compute pass and read back the results
-        async function runComputePass(device, pipeline, bindGroup, matrixSize, result, gpuReadBuffer) {
+        async function runComputePass(device, pipeline, bindGroup, msm_size, result, gpuReadBuffer) {
             const commandEncoder = device.createCommandEncoder();
 
             const computePass = commandEncoder.beginComputePass();
             computePass.setPipeline(pipeline);
             computePass.setBindGroup(0, bindGroup);
-            computePass.dispatchWorkgroups(Math.ceil(matrixSize / 1024));
+            computePass.dispatchWorkgroups(1);
             computePass.end();
 
-            commandEncoder.copyBufferToBuffer(result, 0, gpuReadBuffer, 0, matrixSize * 4);
+            commandEncoder.copyBufferToBuffer(result, 0, gpuReadBuffer, 0, 3 * NUM_LIMBS * 4);
             device.queue.submit([commandEncoder.finish()]);
 
-            await gpuReadBuffer.mapAsync(GPUBufferUsage.MAP_READ, 0, matrixSize * 4);
+            await gpuReadBuffer.mapAsync(GPUBufferUsage.MAP_READ, 0, 3 * NUM_LIMBS * 4);
             await device.queue.onSubmittedWorkDone();
 
-            const copyArrayBuffer = gpuReadBuffer.getMappedRange(0, matrixSize * 4);
+            const copyArrayBuffer = gpuReadBuffer.getMappedRange(0, 3 * NUM_LIMBS * 4);
             const data = copyArrayBuffer.slice();
 
-            const resultMatrix = new Uint32Array(copyArrayBuffer);
-            return resultMatrix;
+            const output = new Uint32Array(copyArrayBuffer);
+            return output;
+        }
+
+        function get_packed_point(x, y) {
+            const one = bigintToUint32Array(BigInt('1'));
+            return new Uint32Array([
+                ...x,
+                ...y,
+                ...one
+            ]);
         }
 
         (async () => {
             // Initialize WebGPU and set up matrices
             const device = await initWebGPU();
-            const matrixSize = 16; // 4x4 matrix example
-            const matrixA = new Uint32Array(matrixSize); // 4x4 matrix with 256-bit integers
-            matrixA[0] = 0x4323;
-            matrixA[1] = 0x4086;
-            const matrixB = new Uint32Array(matrixSize); // 4x4 matrix with 256-bit integers
-            matrixB[0] = 0x9005;
-            matrixB[1] = 0x3fff;
+            const msm_size = MSM_SIZE;
+            const coord_x = bigintToUint32Array(BigInt('22304380549750642616165107876029345325911088198117424279971154895103981677948'));
+            const coord_y = bigintToUint32Array(BigInt('14354096399413720219912473247241970521073754194408414292017996939864946211566'));
+            const scalar = bigintToUint32Array(BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935'));
+
+            let in_points = new Uint32Array(0);
+            let in_scalars = new Uint32Array(0);
+            for (let i = 0; i < msm_size; i++) {
+                const curr = get_packed_point(coord_x, coord_y);
+                in_points = new Uint32Array([
+                    ...in_points,
+                    ...curr
+                ]);
+                in_scalars = new Uint32Array([
+                    ...in_scalars,
+                    ...scalar
+                ]);
+            }
 
             // Set up the buffers
-            const [input_0, input_1, result] = await setupBuffers(device, matrixSize, matrixA, matrixB);
+            const [points, scalars, result] = await setupBuffers(device, msm_size, in_points, in_scalars);
+
+            // Load shader code
+            const shaderCode = await loadShader();
 
             // Set up the pipeline and bind groups
-            const [computePipeline, bindGroup] = await setupPipeline(device, shaderCode, matrixSize, input_0, input_1, result);
+            const [computePipeline, bindGroup] = await setupPipeline(device, shaderCode, msm_size, points, scalars, result);
 
             // Set up the read buffer
             const gpuReadBuffer = device.createBuffer({
-                size: matrixSize * 4,
+                size: 3 * NUM_LIMBS * 4,
                 usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
             });
 
             const start = performance.now();
             // Run the compute pass and read back the results
-            const matrixC = await runComputePass(device, computePipeline, bindGroup, matrixSize, result, gpuReadBuffer);
+            const output = await runComputePass(device, computePipeline, bindGroup, msm_size, result, gpuReadBuffer);
+            const x = uint32ArrayToBigint(output.slice(0, 16));
+            const y = uint32ArrayToBigint(output.slice(16, 32));
+            const z = uint32ArrayToBigint(output.slice(32, 48));
             console.log(performance.now() - start);
-            console.log(matrixC);
+            console.log('0x' + x.toString(16));
+            console.log('0x' + y.toString(16));
+            console.log('0x' + z.toString(16));
         })();
+
+        function bigintToUint32Array(bigint) {
+            // Convert the BigInt to a hex string
+            const hexString = bigint.toString(16);
+
+            // Pad the hex string with leading zeros, if necessary
+            const paddedHexString = hexString.padStart(BIGINT_SIZE/4, '0');
+
+            // Split the padded hex string into an array of 16-bit values
+            const uint32Array = new Uint32Array(paddedHexString.length / 4);
+            for (let i = 0; i < paddedHexString.length; i += 4) {
+                uint32Array[i / 4] = parseInt(paddedHexString.slice(i, i + 4), 16);
+            }
+
+            return uint32Array.reverse();
+        }
+
+        function uint32ArrayToBigint(uint32Array) {
+            // Convert the Uint16Array to a hex string
+            let hexString = '';
+            for (const uint32 of uint32Array) {
+                hexString = uint32.toString(16).padStart(4, '0') + hexString;
+            }
+
+            // Convert the hex string to a BigInt
+            return BigInt('0x' + hexString);
+        }
+
     </script>
 </body>
 
