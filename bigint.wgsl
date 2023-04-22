@@ -12,6 +12,10 @@ struct BigInt512 {
     limbs: array<u32,2*N>
 }
 
+struct BigInt272 {
+    limbs: array<u32,N+1>
+}
+
 // Careful, a and res may point to the same thing.
 fn add(a: BigInt256, b: BigInt256, res: ptr<function, BigInt256>) -> u32 {
     var carry: u32 = 0;
@@ -53,6 +57,21 @@ fn add_512(a: BigInt512, b: BigInt512, res: ptr<function, BigInt512>) -> u32 {
 fn sub_512(a: BigInt512, b: BigInt512, res: ptr<function, BigInt512>) -> u32 {
     var borrow: u32 = 0;
     for (var i: u32 = 0; i < (2*N); i = i + 1u) {
+        (*res).limbs[i] = a.limbs[i] - b.limbs[i] - borrow;
+        if (a.limbs[i] < (b.limbs[i] + borrow)) {
+            (*res).limbs[i] += W_mask + 1;
+            borrow = 1u;
+        } else {
+            borrow = 0u;
+        }
+    }
+    return borrow;
+}
+
+// assumes a >= b
+fn sub_272(a: BigInt272, b: BigInt272, res: ptr<function, BigInt272>) -> u32 {
+    var borrow: u32 = 0;
+    for (var i: u32 = 0; i < N + 1; i = i + 1u) {
         (*res).limbs[i] = a.limbs[i] - b.limbs[i] - borrow;
         if (a.limbs[i] < (b.limbs[i] + borrow)) {
             (*res).limbs[i] += W_mask + 1;

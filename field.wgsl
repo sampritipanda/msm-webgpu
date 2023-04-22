@@ -5,6 +5,10 @@ const BASE_MODULUS: BigInt256 = BigInt256(
     array(1u, 0u, 12525u, 39213u, 63771u, 2380u, 39164u, 8774u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 16384u)
 );
 
+const BASE_MODULUS_MEDIUM_WIDE: BigInt272 = BigInt272(
+    array(1u, 0u, 12525u, 39213u, 63771u, 2380u, 39164u, 8774u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 16384u, 0u)
+);
+
 const BASE_MODULUS_WIDE: BigInt512 = BigInt512(
     array(1u, 0u, 12525u, 39213u, 63771u, 2380u, 39164u, 8774u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 16384u,
         0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u)
@@ -42,6 +46,31 @@ fn field_reduce(a: BigInt256) -> BaseField {
     } else {
         return res;
     }
+}
+
+fn shorten(a: BigInt272) -> BigInt256 {
+    var out: BigInt256;
+    for (var i = 0u; i < N; i = i + 1u) {
+        out.limbs[i] = a.limbs[i];
+    }
+    return out;
+}
+
+// reduces l times (assumes that 0 <= a < multi * mod)
+fn field_reduce_272(a: BigInt272, multi: u32) -> BaseField {
+    var res: BigInt272;
+    var cur = a;
+    var cur_multi = multi + 1;
+    while (cur_multi > 0u) {
+        var underflow = sub_272(cur, BASE_MODULUS_MEDIUM_WIDE, &res);
+        if (underflow == 1u) {
+            return shorten(cur);
+        } else {
+            cur = res;
+        }
+        cur_multi = cur_multi - 1u;
+    }
+    return ZERO;
 }
 
 fn field_add(a: BaseField, b: BaseField) -> BaseField { 
@@ -85,6 +114,19 @@ fn field_small_scalar_mul(a: u32, b: BaseField) -> BaseField {
     var constant: BaseField;
     constant.limbs[0] = a;
     return field_mul(constant, b);
+}
+
+fn field_small_scalar_shift(l: u32, a: BaseField) -> BaseField { // max shift allowed is 16
+    // assert (l < 16u);
+    var res: BigInt272;
+    for (var i = 0u; i < N; i = i + 1u) {
+        let shift = a.limbs[i] << l;
+        res.limbs[i] = res.limbs[i] | (shift & W_mask);
+        res.limbs[i + 1] = (shift >> W);
+    }
+
+    var output = field_reduce_272(res, (1u << l)); // can probably be optimised
+    return output;
 }
 
 fn field_pow(p: BaseField, e: u32) -> BaseField {

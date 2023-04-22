@@ -5,17 +5,22 @@ struct JacobianPoint {
 };
 
 fn jacobian_double(p: JacobianPoint) -> JacobianPoint {
+    // https://www.hyperelliptic.org/EFD/g1p/auto-shortw-jacobian-0.html#doubling-dbl-2009-l
     if (field_eq(p.y, ZERO)) {
         return JacobianPoint(ZERO, ZERO, ZERO);
     }
 
-    let ysq = field_pow(p.y, 2);
-    let S = field_small_scalar_mul(4, field_mul(p.x, ysq));
-    let M = field_small_scalar_mul(3, field_pow(p.x, 2)); // assumes a = 0, sw curve
-    let nx = field_sub(field_pow(M, 2), field_small_scalar_mul(2, S));
-    let ny = field_sub(field_mul(M, field_sub(S, nx)), field_small_scalar_mul(8, field_pow(ysq, 2)));
-    let nz = field_mul(field_small_scalar_mul(2, p.y), p.z);
-    return JacobianPoint(nx, ny, nz);
+    let A = field_mul(p.x, p.x);
+    let B = field_mul(p.y, p.y);
+    let C = field_mul(B, B);
+    let X1plusB = field_add(p.x, B);
+    let D = field_small_scalar_shift(1, field_sub(field_mul(X1plusB, X1plusB), field_add(A, C)));
+    let E = field_add(field_small_scalar_shift(1, A), A);
+    let F = field_mul(E, E);
+    let x3 = field_sub(F, field_small_scalar_shift(1, D));
+    let y3 = field_sub(field_mul(E, field_sub(D, x3)), field_small_scalar_shift(3, C));
+    let z3 = field_mul(field_small_scalar_shift(1, p.y), p.z);
+    return JacobianPoint(x3, y3, z3);
 }
 
 fn jacobian_add(p: JacobianPoint, q: JacobianPoint) -> JacobianPoint {
