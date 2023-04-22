@@ -79,6 +79,24 @@ fn mul(a: BigInt256, b: BigInt256) -> BigInt512 {
     return even;
 }
 
+fn mul2(a: BigInt256, b: BigInt256) -> BigInt512 {
+    var res: BigInt512;
+    let N = 16u;
+    for (var i = 0u; i < N; i = i + 1u) {
+        for (var j = 0u; j < N; j = j + 1u) {
+            let c = a.limbs[i] * b.limbs[j];
+            res.limbs[i+j] += c & ((1 << 16) - 1u);
+            res.limbs[i+j+1] += c >> 16;
+        }   
+    }
+    // start from 0 and carry the extra over to the next index
+    for (var i = 0u; i < 2*N - 1; i = i + 1u) {
+        res.limbs[i+1] += res.limbs[i] >> 16;
+        res.limbs[i] = res.limbs[i] & ((1 << 16) - 1u);
+    }
+    return res;
+}
+
 
 struct Array {
 	data: array<u32>
@@ -105,7 +123,7 @@ fn main(
         a.limbs[i] = input_0.data[i];
         b.limbs[i] = input_1.data[i];        
     }
-    var res = sub(a, b);
+    var res = mul2(a, b);
     for (var i = 0u; i < 16u; i = i + 1) {
         result.data[i] = res.limbs[i];
     }
