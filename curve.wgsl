@@ -4,19 +4,44 @@ struct JacobianPoint {
     z: BaseField
 };
 
-fn jacobian_double(p: JacobianPoint) -> JacobianPoint {
-    if (field_eq(p.y, ZERO)) {
-        return JacobianPoint(ZERO, ZERO, ZERO);
-    }
-
-    let ysq = field_pow(p.y, 2);
-    let S = field_small_scalar_mul(4, field_mul(p.x, ysq));
-    let M = field_small_scalar_mul(3, field_pow(p.x, 2)); // assumes a = 0, sw curve
-    let nx = field_sub(field_pow(M, 2), field_small_scalar_mul(2, S));
-    let ny = field_sub(field_mul(M, field_sub(S, nx)), field_small_scalar_mul(8, field_pow(ysq, 2)));
-    let nz = field_mul(field_small_scalar_mul(2, p.y), p.z);
-    return JacobianPoint(nx, ny, nz);
+fn is_inf(p: JacobianPoint) -> bool {
+    return field_eq(p.z, ZERO);
 }
+
+fn jacobian_double(p: JacobianPoint) -> JacobianPoint {
+    // https://www.hyperelliptic.org/EFD/g1p/auto-shortw-jacobian-0.html#doubling-dbl-2009-l
+    let A = field_mul(p.x, p.x);
+    let B = field_mul(p.y, p.y);
+    let C = field_mul(B, B);
+    let X1plusB = field_add(p.x, B);
+    let D = field_small_scalar_shift(1, field_sub(field_mul(X1plusB, X1plusB), field_add(A, C)));
+    let E = field_add(field_small_scalar_shift(1, A), A);
+    let F = field_mul(E, E);
+    let x3 = field_sub(F, field_small_scalar_shift(1, D));
+    let y3 = field_sub(field_mul(E, field_sub(D, x3)), field_small_scalar_shift(3, C));
+    let z3 = field_mul(field_small_scalar_shift(1, p.y), p.z);
+    return JacobianPoint(x3, y3, z3);
+}
+
+// double p and add q
+// todo: can be optimized if one of the z coordinates is 1
+// fn jacobian_dadd(p: JacobianPoint, q: JacobianPoint) -> JacobianPoint {
+//     if (is_inf(p)) {
+//         return q;
+//     } else if (is_inf(q)) {
+//         return jacobian_double(p);
+//     }
+
+//     let twox = field_small_scalar_shift(1, p.x);
+//     let sqrx = field_mul(p.x, p.x);
+//     let dblR = field_add(field_small_scalar_shift(1, sqrx), sqrx);
+//     let dblH = field_small_scalar_shift(1, p.y);
+
+//     let x3 = field_mul(q.z, q.z);
+//     let z3 = field_mul(p.z, q.z);
+//     let addH = field_mul(p.z, p.z);
+
+// }
 
 fn jacobian_add(p: JacobianPoint, q: JacobianPoint) -> JacobianPoint {
     if (field_eq(p.y, ZERO)) {
@@ -26,10 +51,12 @@ fn jacobian_add(p: JacobianPoint, q: JacobianPoint) -> JacobianPoint {
         return p;
     }
 
-    let U1 = field_mul(p.x, field_pow(q.z, 2));
-    let U2 = field_mul(q.x, field_pow(p.z, 2));
-    let S1 = field_mul(p.y, field_pow(q.z, 3));
-    let S2 = field_mul(q.y, field_pow(p.z, 3));
+    let Z1Z1 = field_mul(p.z, p.z);
+    let Z2Z2 = field_mul(q.z, q.z);
+    let U1 = field_mul(p.x, Z1Z1);
+    let U2 = field_mul(q.x, Z2Z2);
+    let S1 = field_mul(p.y, field_mul(Z2Z2, q.z));
+    let S2 = field_mul(q.y, field_mul(Z1Z1, p.z));
     if (field_eq(U1, U2)) {
         if (field_eq(S1, S2)) {
             return jacobian_double(p);
@@ -39,13 +66,13 @@ fn jacobian_add(p: JacobianPoint, q: JacobianPoint) -> JacobianPoint {
     }
 
     let H = field_sub(U2, U1);
-    let R = field_sub(S2, S1);
-    let H2 = field_mul(H, H);
-    let H3 = field_mul(H2, H);
-    let U1H2 = field_mul(U1, H2);
-    let nx = field_sub(field_sub(field_pow(R, 2), H3), field_small_scalar_mul(2, U1H2));
-    let ny = field_sub(field_mul(R, field_sub(U1H2, nx)), field_mul(S1, H3));
-    let nz = field_mul(field_mul(H, p.z), q.z);
+    let I = field_small_scalar_shift(2, field_mul(H, H));
+    let J = field_mul(H, I);
+    let R = field_small_scalar_shift(1, field_sub(S2, S1));
+    let V = field_mul(U1, I);
+    let nx = field_sub(field_mul(R, R), field_add(J, field_small_scalar_shift(1, V)));
+    let ny = field_sub(field_mul(R, field_sub(V, nx)), field_small_scalar_shift(1, field_mul(S1, J)));
+    let nz = field_mul(H, field_sub(field_pow(field_add(p.z, q.z), 2), field_add(Z1Z1, Z2Z2)));
     return JacobianPoint(nx, ny, nz);
 }
 
