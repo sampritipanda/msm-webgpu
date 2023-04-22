@@ -5,9 +5,9 @@ var<storage, read_write> scalars: array<ScalarField>;
 @group(0) @binding(2)
 var<storage, read_write> result: JacobianPoint;
 
-const WORKGROUP_SIZE = 1;
+const WORKGROUP_SIZE = 128;
 
-// var<workgroup> mem: array<JacobianPoint, WORKGROUP_SIZE>;
+var<workgroup> mem: array<JacobianPoint, WORKGROUP_SIZE>;
 
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn main(
@@ -17,19 +17,19 @@ fn main(
     let gidx = global_id.x;
     let lidx = local_id.x;
 
-    result = jacobian_double(points[gidx]);
+    mem[lidx] = jacobian_mul(points[gidx], scalars[gidx]);
 
-    // workgroupBarrier();
+    workgroupBarrier();
 
-    // for (var offset: u32 = WORKGROUP_SIZE / 2u; offset > 0u; offset = offset / 2u) {
-    //     if (lidx < offset) {
-    //         mem[lidx] = jacobian_add(mem[lidx], mem[lidx + offset]);
-    //     }
-    //     workgroupBarrier();
-    // }
+    for (var offset: u32 = WORKGROUP_SIZE / 2u; offset > 0u; offset = offset / 2u) {
+        if (lidx < offset) {
+            mem[lidx] = jacobian_add(mem[lidx], mem[lidx + offset]);
+        }
+        workgroupBarrier();
+    }
 
-    // // TODO: read about memory ordering and fix this when we have multiple global invocations
-    // if (lidx == 0) {
-    //     result = mem[0];
-    // }
+    // TODO: read about memory ordering and fix this when we have multiple global invocations
+    if (lidx == 0) {
+        result = mem[0];
+    }
 }
