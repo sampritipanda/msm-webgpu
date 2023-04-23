@@ -1,15 +1,20 @@
-const WORKGROUP_SIZE = 128;
+const WORKGROUP_SIZE = 64;
+const NUM_INVOCATIONS = 256;
+const MSM_SIZE = WORKGROUP_SIZE * NUM_INVOCATIONS;
 
 @group(0) @binding(0)
 var<storage, read_write> points: array<JacobianPoint>;
 @group(0) @binding(1)
 var<storage, read_write> scalars: array<ScalarField>;
 @group(0) @binding(2)
-var<storage, read_write> result: JacobianPoint;
+var<storage, read_write> result: array<JacobianPoint, NUM_INVOCATIONS>;
 @group(0) @binding(3)
-var<storage, read_write> spinlock: atomic<u32>;
+var<storage, read_write> mem: array<JacobianPoint, MSM_SIZE>;
 
-var<workgroup> mem: array<JacobianPoint, WORKGROUP_SIZE>;
+// 3 -> 2
+// storage -> workgroup
+// second stage
+
 
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn main(
@@ -19,30 +24,42 @@ fn main(
     let gidx = global_id.x;
     let lidx = local_id.x;
 
-    result = jacobian_mul(points[0], scalars[0]);
+    mem[gidx] = jacobian_mul(points[gidx], scalars[gidx]);
 
-    mem[lidx] = jacobian_mul(points[gidx], scalars[gidx]);
-
-    workgroupBarrier();
+    storageBarrier();
 
     for (var offset: u32 = WORKGROUP_SIZE / 2u; offset > 0u; offset = offset / 2u) {
         if (lidx < offset) {
-            mem[lidx] = jacobian_add(mem[lidx], mem[lidx + offset]);
+            mem[gidx] = jacobian_add(mem[gidx], mem[gidx + offset]);
         }
-        workgroupBarrier();
+        storageBarrier();
     }
 
-    // TODO: read about memory ordering and fix this when we have multiple global invocations
     if (lidx == 0) {
-        var a: u32 = 0;
-        // waiting for lock
-        while (!atomicCompareExchangeWeak(&spinlock, 0, 1).exchanged) {
-            a = a + 1u;
-        }
-        // got lock
-        result = jacobian_add(result, mem[0]);
-        // release lock
-        atomicCompareExchangeWeak(&spinlock, 1, 0);
+        result[gidx/WORKGROUP_SIZE] = mem[gidx];
     }
 }
 
+@compute @workgroup_size(256)
+fn aggregate(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+    let gidx = global_id.x;
+    let lidx = local_id.x;
+
+    const split = NUM_INVOCATIONS / 256;
+
+    for (var j = 1; j < split; j = j + 1) {
+        result[lidx] = jacobian_add(result[lidx], result[lidx + split * 256]);
+    }
+
+    storageBarrier();
+
+    for (var offset: u32 = 256 / 2u; offset > 0u; offset = offset / 2u) {
+        if (lidx < offset) {
+            result[gidx] = jacobian_add(result[gidx], result[gidx + offset]);
+        }
+        storageBarrier();
+    }
+}

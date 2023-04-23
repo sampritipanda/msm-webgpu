@@ -10,9 +10,10 @@
                 requiredLimits: {
                     maxBufferSize: adapter.limits.maxBufferSize,
                     maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
-                    maxComputeWorkgroupSizeX: adapter.limits.maxComputeWorkgroupSizeX,
-                    maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup,
-                    maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize
+                    maxComputeWorkgroupSizeX: 1024,
+                    maxComputeInvocationsPerWorkgroup: 1024,
+                    maxComputeWorkgroupStorageSize: adapter.limits.maxComputeWorkgroupStorageSize,
+                    maxComputeWorkgroupsPerDimension: adapter.limits.maxComputeWorkgroupsPerDimension,
                 },
             });
             return device;
@@ -25,11 +26,10 @@
                 'field.wgsl',
                 'curve.wgsl',
                 'pippenger.wgsl',
-                'pippenger_fake.wgsl',
+                // 'pippenger_fake.wgsl',
                 'main.wgsl',
             ];
 
-            // Shader code to handle 256-bit integer multiplication
             let shaderCode = "";
             for (let file of shaders_in_order) {
                 const resp = await fetch(file);
@@ -41,15 +41,14 @@
         const LIMB_WIDTH = 16;
         const BIGINT_SIZE = 256;
         const NUM_LIMBS = BIGINT_SIZE / LIMB_WIDTH;
-        const MSM_SIZE = 128 * 1;
-        const WORKGROUP_SIZE = 128;
-        const NUM_INVOCATIONS = Math.ceil(MSM_SIZE/WORKGROUP_SIZE);
-        const ZERO_POINT = new Uint8Array([
+        const WORKGROUP_SIZE = 64;
+        const NUM_INVOCATIONS = 256;
+        const MSM_SIZE = WORKGROUP_SIZE * NUM_INVOCATIONS;
+        const ZERO_POINT = new Uint32Array([
             ...bigintToUint32Array(BigInt('0')),
             ...bigintToUint32Array(BigInt('0')),
             ...bigintToUint32Array(BigInt('1')),
         ]);
-        console.log(ZERO_POINT);
         console.log(NUM_INVOCATIONS);
 
         // Set up the input and output buffers for the matrices
@@ -63,13 +62,12 @@
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
             });
             const result = device.createBuffer({
-                size: 3 * NUM_LIMBS * 4,
+                size: NUM_INVOCATIONS * 3 * NUM_LIMBS * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
             });
 
             device.queue.writeBuffer(points, 0, new Uint8Array(in_points.buffer));
             device.queue.writeBuffer(scalars, 0, new Uint8Array(in_scalars.buffer));
-            device.queue.writeBuffer(result, 0, ZERO_POINT);
 
             return [points, scalars, result];
         }
@@ -97,10 +95,13 @@
                 layout: pipelineLayout,
                 compute: { module: shaderModule, entryPoint: "main" },
             });
-
-            const spinlock = device.createBuffer({
-                size: 4,
-                usage: GPUBufferUsage.STORAGE,
+            const aggregatePipeline = device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: { module: shaderModule, entryPoint: "aggregate" },
+            });
+            const mem = device.createBuffer({
+                size: MSM_SIZE * 3 * NUM_LIMBS * 4,
+                usage: GPUBufferUsage.STORAGE
             });
 
             const bindGroup = device.createBindGroup({
@@ -109,15 +110,15 @@
                     { binding: 0, resource: { buffer: points } },
                     { binding: 1, resource: { buffer: scalars } },
                     { binding: 2, resource: { buffer: result } },
-                    { binding: 3, resource: { buffer: spinlock } },
+                    { binding: 3, resource: { buffer: mem } },
                 ],
             });
 
-            return [computePipeline, bindGroup];
+            return [computePipeline, aggregatePipeline, bindGroup];
         }
 
         // Run the compute pass and read back the results
-        async function runComputePass(device, pipeline, bindGroup, msm_size, result, gpuReadBuffer) {
+        async function runComputePass(device, pipeline, aggregatePipeline, bindGroup, msm_size, result, gpuReadBuffer) {
             const commandEncoder = device.createCommandEncoder();
 
             const computePass = commandEncoder.beginComputePass();
@@ -126,13 +127,20 @@
             computePass.dispatchWorkgroups(NUM_INVOCATIONS);
             computePass.end();
 
-            commandEncoder.copyBufferToBuffer(result, 0, gpuReadBuffer, 0, 3 * NUM_LIMBS * 4);
-            device.queue.submit([commandEncoder.finish()]);
+            const aggregatePass = commandEncoder.beginComputePass();
+            aggregatePass.setPipeline(aggregatePipeline);
+            aggregatePass.setBindGroup(0, bindGroup);
+            aggregatePass.dispatchWorkgroups(1);
+            aggregatePass.end();
 
-            await gpuReadBuffer.mapAsync(GPUBufferUsage.MAP_READ, 0, 3 * NUM_LIMBS * 4);
+            commandEncoder.copyBufferToBuffer(result, 0, gpuReadBuffer, 0, NUM_INVOCATIONS * 3 * NUM_LIMBS * 4);
+            device.queue.submit([commandEncoder.finish()]);
+            
             await device.queue.onSubmittedWorkDone();
 
-            const copyArrayBuffer = gpuReadBuffer.getMappedRange(0, 3 * NUM_LIMBS * 4);
+            await gpuReadBuffer.mapAsync(GPUBufferUsage.MAP_READ, 0, NUM_INVOCATIONS * 3 * NUM_LIMBS * 4);
+
+            const copyArrayBuffer = gpuReadBuffer.getMappedRange(0, NUM_INVOCATIONS * 3 * NUM_LIMBS * 4);
             const data = copyArrayBuffer.slice();
 
             const output = new Uint32Array(copyArrayBuffer);
@@ -156,18 +164,12 @@
             const coord_y = bigintToUint32Array(BigInt('14354096399413720219912473247241970521073754194408414292017996939864946211566'));
             const scalar = bigintToUint32Array(BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935'));
 
-            let in_points = new Uint32Array(0);
-            let in_scalars = new Uint32Array(0);
+            let in_points = new Uint32Array(msm_size * 3 * NUM_LIMBS);
+            let in_scalars = new Uint32Array(msm_size * NUM_LIMBS);
+            const curr = get_packed_point(coord_x, coord_y);
             for (let i = 0; i < msm_size; i++) {
-                const curr = get_packed_point(coord_x, coord_y);
-                in_points = new Uint32Array([
-                    ...in_points,
-                    ...curr
-                ]);
-                in_scalars = new Uint32Array([
-                    ...in_scalars,
-                    ...scalar
-                ]);
+                in_points.set(curr, i * 3 * NUM_LIMBS);
+                in_scalars.set(scalar, i * NUM_LIMBS);
             }
 
             // Set up the buffers
@@ -177,18 +179,19 @@
             const shaderCode = await loadShader();
 
             // Set up the pipeline and bind groups
-            const [computePipeline, bindGroup] = await setupPipeline(device, shaderCode, msm_size, points, scalars, result);
+            const [computePipeline, aggregatePipeline, bindGroup] = await setupPipeline(device, shaderCode, msm_size, points, scalars, result);
 
             // Set up the read buffer
             const gpuReadBuffer = device.createBuffer({
-                size: 3 * NUM_LIMBS * 4,
+                size: NUM_INVOCATIONS * 3 * NUM_LIMBS * 4,
                 usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
             });
 
             console.log("starting shader");
             const start = performance.now();
             // Run the compute pass and read back the results
-            const output = await runComputePass(device, computePipeline, bindGroup, msm_size, result, gpuReadBuffer);
+            const output = await runComputePass(device, computePipeline, aggregatePipeline, bindGroup, msm_size, result, gpuReadBuffer);
+            console.log(output);
             const x = uint32ArrayToBigint(output.slice(0, 16));
             const y = uint32ArrayToBigint(output.slice(16, 32));
             const z = uint32ArrayToBigint(output.slice(32, 48));

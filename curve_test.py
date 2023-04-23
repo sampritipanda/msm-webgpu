@@ -12,14 +12,15 @@ s = 1157920892373161954235709850086879078532699846656405640394575840079131296399
 print(G)
 print(s)
 
-a = 0x3ac2ddb24d8d69be9dbe32da2406eecd42aba0ab663a451a8f1c0dfd0fbbf33f
-b = 0x2089cd96378ef4673b01c17fa1586824c5b0e753ff261b9ec351a93c54982de0
-c = 0x7b24c8c9d9f8c02814c7849ec7a92acee76411d4ccd2bae205f7c4b226e3fda
+a = 0x24c7d5b939454dc2e5621c8d1ebe60f5a8dde102249b2bb71564dc7c1a8f63c
+b = 0x12ebb42bc8f4fbf5832d3d432e9aaa6641ec44986ab9c88febdfe7f5a5c7fd
+c = 0x2e4abc7c0926d59d270d036fb9312316ce58c46861263dff415e89c9152c3121
 
 kek = from_jacob((a, b, c))
-for i in range(256):
-    if kek == G * s * 128 * i:
+for i in range(1024+1):
+    if kek == G * s * 64 * i:
         print(i)
+        break
 
 exit()
 
