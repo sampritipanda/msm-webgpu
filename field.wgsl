@@ -147,6 +147,27 @@ fn field_eq(a: BaseField, b: BaseField) -> bool {
     return true;
 }
 
+fn field_sqr(a: BaseField) -> BaseField {
+    var xy: BigInt512 = sqr(a);
+    var xy_hi: BaseField = get_higher_with_slack(xy);
+    var l: BigInt512 = mul(xy_hi, BASE_M);
+    var l_hi: BaseField = get_higher_with_slack(l);
+    var lp: BigInt512 = mul(l_hi, BASE_MODULUS);
+    var r_wide: BigInt512;
+    sub_512(xy, lp, &r_wide);
+
+    var r_wide_reduced: BigInt512;
+    var underflow = sub_512(r_wide, BASE_MODULUS_WIDE, &r_wide_reduced);
+    if (underflow == 0u) {
+        r_wide = r_wide_reduced;
+    }
+    var r: BaseField;
+    for (var i = 0u; i < N; i = i + 1u) {
+        r.limbs[i] = r_wide.limbs[i];
+    }
+    return field_reduce(r);
+}
+
 /*
 fn field_to_bits(a: BigInt256) -> array<bool, 256> {
   let res: array<bool, 256> = array();

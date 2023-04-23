@@ -1,0 +1,58 @@
+
+fn pippenger(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>
+) {
+    let gidx = global_id.x;
+    let lidx = local_id.x;
+
+    let POINTS_PER_WORKGROUP = 1000;
+
+
+    for(var i = 0; i < POINTS_PER_WORKGROUP; i = i + 1){
+        // check if the lidx bit of scalar[i] is on
+        let limb_idx = lidx/W;
+        let bit_active = scalar[i].limbs[lidx/W] & (1 << (lidx % W));
+        if (bit_active){
+            
+        }
+    }
+}
+
+// ops would be N / 2 additions + 256 doubles
+// total would be (N/2 + 256) * 256 + 256
+// 128N + 256 ^ 2
+
+
+
+// ops would be N/2 additions, then 256 additons per workgroup
+(N/2) * 256 + 256
+
+
+// (n * 128)
+// without pippenger we are doing 128 doubles for each N and then one more more cummulation
+// 128N + N
+
+
+// N / k invocations
+// using k per group
+// each invocation does 2^k calculations for additions
+
+// then 256 invocations
+// each invocation does N/k additions
+// then we do combine and merge
+
+
+10000 / 10 = 1000 invocations
+1000 adds
+
+then 256 invocations
+each invocation does 1000 adds
+// then we do 256 * 2 serially
+
+total length = 1000 adds + 1000 adds + 512 doubles
+
+// without pippenger: 10000 invocations. each does 256 doubles + 128 adds
+// then 8 ops to reduce into one workgroup
+// then serial accumulation
+

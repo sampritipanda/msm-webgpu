@@ -1,11 +1,13 @@
+const WORKGROUP_SIZE = 128;
+
 @group(0) @binding(0)
 var<storage, read_write> points: array<JacobianPoint>;
 @group(0) @binding(1)
 var<storage, read_write> scalars: array<ScalarField>;
 @group(0) @binding(2)
 var<storage, read_write> result: JacobianPoint;
-
-const WORKGROUP_SIZE = 128;
+@group(0) @binding(3)
+var<storage, read_write> spinlock: atomic<u32>;
 
 var<workgroup> mem: array<JacobianPoint, WORKGROUP_SIZE>;
 
@@ -16,6 +18,8 @@ fn main(
 ) {
     let gidx = global_id.x;
     let lidx = local_id.x;
+
+    result = jacobian_mul(points[0], scalars[0]);
 
     mem[lidx] = jacobian_mul(points[gidx], scalars[gidx]);
 
@@ -30,6 +34,15 @@ fn main(
 
     // TODO: read about memory ordering and fix this when we have multiple global invocations
     if (lidx == 0) {
-        result = mem[0];
+        var a: u32 = 0;
+        // waiting for lock
+        while (!atomicCompareExchangeWeak(&spinlock, 0, 1).exchanged) {
+            a = a + 1u;
+        }
+        // got lock
+        result = jacobian_add(result, mem[0]);
+        // release lock
+        atomicCompareExchangeWeak(&spinlock, 1, 0);
     }
 }
+

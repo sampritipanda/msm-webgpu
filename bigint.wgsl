@@ -88,14 +88,35 @@ fn mul(a: BigInt256, b: BigInt256) -> BigInt512 {
     for (var i = 0u; i < N; i = i + 1u) {
         for (var j = 0u; j < N; j = j + 1u) {
             let c = a.limbs[i] * b.limbs[j];
-            res.limbs[i+j] += c & ((1 << 16) - 1u);
-            res.limbs[i+j+1] += c >> 16;
+            res.limbs[i+j] += c & W_mask;
+            res.limbs[i+j+1] += c >> W;
         }   
     }
     // start from 0 and carry the extra over to the next index
     for (var i = 0u; i < 2*N - 1; i = i + 1u) {
-        res.limbs[i+1] += res.limbs[i] >> 16;
-        res.limbs[i] = res.limbs[i] & ((1 << 16) - 1u);
+        res.limbs[i+1] += res.limbs[i] >> W;
+        res.limbs[i] = res.limbs[i] & W_mask;
+    }
+    return res;
+}
+
+fn sqr(a: BigInt256) -> BigInt512 {
+    var res: BigInt512;
+    for (var i = 0u;i < N; i = i + 1u) {
+        let sc = a.limbs[i] * a.limbs[i];
+        res.limbs[(i << 1)] += sc & W_mask;
+        res.limbs[(i << 1)+1] += sc >> W;
+
+        for (var j = i + 1;j < N;j = j + 1u) {
+            let c = a.limbs[i] * a.limbs[j];
+            res.limbs[i+j] += (c & W_mask) << 1;
+            res.limbs[i+j+1] += (c >> W) << 1;
+        }
+    }
+
+    for (var i = 0u; i < 2*N - 1; i = i + 1u) {
+        res.limbs[i+1] += res.limbs[i] >> W;
+        res.limbs[i] = res.limbs[i] & W_mask;
     }
     return res;
 }
