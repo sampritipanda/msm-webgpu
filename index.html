@@ -25,6 +25,7 @@
                 'bigint.wgsl',
                 'field.wgsl',
                 'curve.wgsl',
+                'storage.wgsl',
                 'pippenger.wgsl',
                 // 'pippenger_fake.wgsl',
                 'main.wgsl',
@@ -42,7 +43,7 @@
         const BIGINT_SIZE = 256;
         const NUM_LIMBS = BIGINT_SIZE / LIMB_WIDTH;
         const WORKGROUP_SIZE = 64;
-        const NUM_INVOCATIONS = 256;
+        const NUM_INVOCATIONS = 4096;
         const MSM_SIZE = WORKGROUP_SIZE * NUM_INVOCATIONS;
         const ZERO_POINT = new Uint32Array([
             ...bigintToUint32Array(BigInt('0')),
@@ -82,6 +83,8 @@
                     { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
                     { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
                     { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                    { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                    { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
                 ],
             });
 
@@ -103,6 +106,14 @@
                 size: MSM_SIZE * 3 * NUM_LIMBS * 4,
                 usage: GPUBufferUsage.STORAGE
             });
+            const buffer1 = device.createBuffer({
+                size: 256 * NUM_INVOCATIONS * 3 * NUM_LIMBS * 4,
+                usage: GPUBufferUsage.STORAGE
+            });
+            const buffer2 = device.createBuffer({
+                size: 256 * NUM_INVOCATIONS * 3 * NUM_LIMBS * 4,
+                usage: GPUBufferUsage.STORAGE
+            });
 
             const bindGroup = device.createBindGroup({
                 layout: bindGroupLayout,
@@ -111,6 +122,8 @@
                     { binding: 1, resource: { buffer: scalars } },
                     { binding: 2, resource: { buffer: result } },
                     { binding: 3, resource: { buffer: mem } },
+                    { binding: 4, resource: { buffer: buffer1 } },
+                    { binding: 5, resource: { buffer: buffer2 } },
                 ],
             });
 
