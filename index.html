@@ -169,13 +169,17 @@
             ]);
         }
 
-        (async () => {
+        const run = (async () => {
+            document.write("generating random points<br/>");
+
             // Initialize WebGPU and set up matrices
             const device = await initWebGPU();
             const msm_size = MSM_SIZE;
             const coord_x = bigintToUint32Array(BigInt('22304380549750642616165107876029345325911088198117424279971154895103981677948'));
             const coord_y = bigintToUint32Array(BigInt('14354096399413720219912473247241970521073754194408414292017996939864946211566'));
             const scalar = bigintToUint32Array(BigInt('115792089237316195423570985008687907853269984665640564039457584007913129639935'));
+
+            document.write("MSM Size: " + msm_size.toString() + "<br/>");
 
             let in_points = new Uint32Array(msm_size * 3 * NUM_LIMBS);
             let in_scalars = new Uint32Array(msm_size * NUM_LIMBS);
@@ -184,6 +188,8 @@
                 in_points.set(curr, i * 3 * NUM_LIMBS);
                 in_scalars.set(scalar, i * NUM_LIMBS);
             }
+
+            document.write("writing data to webgpu<br/>");
 
             // Set up the buffers
             const [points, scalars, result] = await setupBuffers(device, msm_size, in_points, in_scalars);
@@ -200,7 +206,7 @@
                 usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
             });
 
-            console.log("starting shader");
+            document.write("starting shader computation.<br/>");
             const start = performance.now();
             // Run the compute pass and read back the results
             const output = await runComputePass(device, computePipeline, aggregatePipeline, bindGroup, msm_size, result, gpuReadBuffer);
@@ -208,11 +214,12 @@
             const x = uint32ArrayToBigint(output.slice(0, 16));
             const y = uint32ArrayToBigint(output.slice(16, 32));
             const z = uint32ArrayToBigint(output.slice(32, 48));
-            console.log(performance.now() - start);
-            console.log('0x' + x.toString(16));
-            console.log('0x' + y.toString(16));
-            console.log('0x' + z.toString(16));
-        })();
+            document.write("finished in (ms): " +  (performance.now() - start).toString() + "<br/>");
+            document.write("Output (in jacobian form):<br/>");
+            document.write('x: 0x' + x.toString(16) + "<br/>");
+            document.write('y: 0x' + y.toString(16) + "<br/>");
+            document.write('z: 0x' + z.toString(16) + "<br/>");
+        });
 
         function bigintToUint32Array(bigint) {
             // Convert the BigInt to a hex string
@@ -242,6 +249,7 @@
         }
 
     </script>
+    <button onclick="javascript:run()">Run it!</button>
 </body>
 
 </html>

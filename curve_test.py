@@ -17,6 +17,7 @@ b = 0xbe564a8781cbd8fa78a8ea366e6d0a03b368ad2033cd06efa3954c0e5b05603
 c = 0x31e71da1d2922ce27f46dade9cd8d540ed3046ae8c4eb87c10427d10ca722637
 
 kek = from_jacob((a, b, c))
+print(kek == G * s * 4096 * 64)
 for i in range(4096+1):
     if kek == G * s * 64 * i:
         print(i)
